@@ -10,8 +10,11 @@ or as an indented listing with ANSI line/box drawing characters
 as a visual aid to show how the nodes are connected.
 
 The logic to draw a tree exists in programs like
-`tree` and `pstree`, which draw directory tree structure
-and process tree structure, respectively.
+`tree`, `pstree`, and `cflow`,
+which draw directory tree structure,
+process tree structure,
+and call graph,
+respectively.
 
 `draw-tree` can draw trees of any kind,
 without knowing anything about the nature of the nodes
