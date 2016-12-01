@@ -1,0 +1,7 @@
+main:show_program_version
+show_program_version:fshow_program_version
+main:is_long_option
+main:vischar_r
+main:usage
+main:wdiff_align
+wdiff_align:get_su_char:switch_color

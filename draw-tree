@@ -1,0 +1,355 @@
+#! /usr/bin/perl -w
+    eval 'exec /usr/bin/perl -S $0 ${1+"$@"}'
+        if 0; #$running_under_some_shell
+
+# Filename: draw-tree
+# Brief: Read vertices and edges of a tree and draw the tree using ANSI lines
+#
+# Copyright (C) 2016 Guy Shaw
+# Written by Guy Shaw <gshaw@acm.org>
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU Lesser General Public License as
+# published by the Free Software Foundation; either version 3 of the
+# License, or (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+# Lesser General Public License for more details.
+#
+# You should have received a copy of the GNU Lesser General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+
+=pod
+
+=begin description
+
+Each line of input is a list of names of nodes in a tree.
+The first name in each list is a parent; all other names are child nodes.
+No meaning is associated with any of the names.
+By default, names are words separated by whitespace.
+The --fsep option can specify a field separator character,
+so names with embedded space can be handled.
+
+By default, the tree is pretty-printed by a simple indented listing.
+The --ansi option means to print the indented list using ANSI line/box
+drawing characters, in addition to simple indentation.
+
+For --ansi line drawing only, the --vspace option means to print
+some extra vertical space, after the last node in a level.
+
+=end description
+
+=cut
+
+require 5.0;
+use strict;
+use warnings;
+use Carp;
+use diagnostics;
+use Getopt::Long;
+use File::Spec::Functions;
+
+my $eprint_fh;
+my $dprint_fh;
+
+my $ansi_vbar              = "\170";
+my $ansi_hbar              = "\161";
+my $ansi_left_t            = "\164";
+my $ansi_lower_left_corner = "\155";
+
+my $dbg_fname;
+
+my $debug   = 0;
+my $verbose = 0;
+my $ansi    = 0;
+my $vspace  = 0;
+my $indent  = 4;
+my $fsep;
+my $root;
+
+my @options = (
+    'dfname=s'  => \$dbg_fname,
+    'debug'     => \$debug,
+    'verbose'   => \$verbose,
+    'ansi'      => \$ansi,
+    'fsep=s'    => \$fsep,
+    'indent=i'  => \$indent,
+    'vspace'    => \$vspace,
+    'root=s'    => \$root,
+);
+
+my %tree;
+
+#:subroutines:#
+
+# Decide how to direct eprint*() and dprint*() functions.
+# If STDOUT and STDERR are directed to the same "channel",
+# then eprint*() and dprint*() should be tied to the same file handle.
+#
+# Otherwise, buffering could cause a mix of STDOUT and STDERR to
+# be written out of order.
+#
+sub set_print_fh {
+    my @stdout_statv;
+    my @stderr_statv;
+    my $stdout_chan;
+    my $stderr_chan;
+
+    @stdout_statv = stat(*STDOUT);
+    @stderr_statv = stat(*STDERR);
+    $stdout_chan = join(':', @stdout_statv[0, 1, 6]);
+    $stderr_chan = join(':', @stderr_statv[0, 1, 6]);
+    if (!defined($eprint_fh)) {
+        $eprint_fh = ($stderr_chan eq $stdout_chan) ? *STDOUT : *STDERR;
+    }
+
+    if (!defined($dprint_fh)) {
+        if (defined($dbg_fname)) {
+            open($dprint_fh, '>', $dbg_fname);
+        }
+    }
+    if (!defined($dprint_fh)) {
+        $dprint_fh = ($stderr_chan eq $stdout_chan) ? *STDOUT : *STDERR;
+    }
+}
+
+sub eprint {
+    if (-t $eprint_fh) {
+        print {$eprint_fh} "\e[01;31m\e[K", @_, "\e[m\e[K";
+    }
+    else {
+        print {$eprint_fh} @_;
+    }
+}
+
+sub eprintf {
+    if (-t $eprint_fh) {
+        print  {$eprint_fh}  "\e[01;31m\e[K";
+        printf {$eprint_fh} @_;
+        print  {$eprint_fh}  "\e[m\e[K";
+    }
+    else {
+        printf {$eprint_fh} @_;
+    }
+}
+
+sub vprint {
+    print {$eprint_fh} @_  if ($verbose);
+}
+
+sub vprintf {
+    printf {$eprint_fh} @_  if ($verbose);
+}
+
+sub dprint {
+    print {$dprint_fh} @_ if ($debug);
+}
+
+sub dprintf {
+    printf {$dprint_fh} @_ if ($debug);
+}
+
+sub add_edge {
+    my ($parent, $child) = @_;
+    my $parent_node = $tree{$parent};
+    my $child_node  = $tree{$child};
+    if (!defined($child_node)) {
+        $tree{$child} = [ ];
+    }
+    if (defined($parent_node)) {
+        push(@$parent_node, $child);
+    }
+    else {
+        $tree{$parent} = [ $child ];
+    }
+}
+
+sub print_tree_indent {
+    my ($node_name, $lvl) = @_;
+    my $node = $tree{$node_name};
+    print ' ' x $indent x $lvl, $node_name, "\n";
+    if (!defined($node)) {
+        print ' ' x $indent x $lvl, '<undefined>', "\n";
+        return;
+    }
+    for my $child_name (@$node) {
+        print_tree_indent($child_name, $lvl + 1);
+    }
+}
+
+my @rem = ();
+
+sub pad {
+    my ($str, $width) = @_;
+    my $padding = ' ' x ($width - length($str));
+
+    return $str . $padding;
+}
+
+sub array_sum {
+    my $sum = 0;
+    for (@_) {
+        $sum += $_;
+    }
+    return $sum;
+}
+
+sub print_lines {
+    my ($lvl, $node_name) = @_;
+    my $i;
+    my $j;
+    my $lookahead;
+    my $last = 0;
+
+    dprint $node_name, ': ',
+        'lvl=', $lvl, ', rem=[', join(',', @rem), ']', "\n";
+    # Shift to ANSI line/box drawing character set
+    print "\e(0";
+    $j = -1;
+    for ($i = 0; $i < $lvl; ++$i) {
+        $lookahead = array_sum(@rem[$i + 1 .. $#rem]);
+        if ($lookahead) {
+            if ($rem[$i]) {
+                print pad($ansi_vbar, $indent);
+                $j = $i;
+            }
+            else {
+                print ' ' x $indent;
+            }
+        }
+        else {
+            if ($rem[$i] > 1) {
+                print $ansi_left_t, $ansi_hbar x ($indent - 2), ' ';
+            }
+            else {
+                print $ansi_lower_left_corner, $ansi_hbar x ($indent - 2), ' ';
+                $last = 1;
+            }
+        }
+    }
+
+    # Shift back to normal character set
+    print "\e(B";
+    print $node_name, "\n";
+
+    my $children_ref = $tree{$node_name};
+    if ($vspace && $j != -1 && $last && $lookahead == 0 && scalar(@$children_ref) == 0) {
+        my $k;
+
+        # Shift to ANSI line/box drawing character set
+        print "\e(0";
+        for ($k = 0; $k <= $j; ++$k) {
+            print pad($ansi_vbar, $indent);
+        }
+        print "\n";
+        # Shift back to normal character set
+        print "\e(B";
+    }
+}
+
+sub print_tree_lines {
+    my ($node_name, $lvl) = @_;
+    my $node = $tree{$node_name};
+    print_lines($lvl, $node_name);
+    $rem[$lvl] = scalar(@$node);
+    if ($lvl >= 1 && $rem[$lvl - 1] != 0) {
+        --$rem[$lvl - 1];
+    }
+    if (!defined($node)) {
+        print ' ' x $indent x $lvl, '<undefined>', "\n";
+        return;
+    }
+    for my $child_name (@$node) {
+        print_tree_lines($child_name, $lvl + 1);
+    }
+}
+
+sub print_tree {
+    my ($root, $lvl) = @_;
+
+    if ($ansi) {
+        print_tree_lines($root, $lvl);
+    }
+    else {
+        print_tree_indent($root, $lvl);
+    }
+}
+
+#:options:#
+
+GetOptions(@options) or exit 2;
+
+if (defined($dbg_fname)) {
+    $debug = 1;
+}
+
+set_print_fh();
+
+#:main:#
+
+while (<>) {
+    my @w;
+
+    chomp;
+    s{\r\z}{}msx;
+    next if (m{\A\s*\z}msx);
+    if (defined($fsep)) {
+        @w = split($fsep, $_);
+    }
+    else {
+        @w = split;
+    }
+    my $parent = shift(@w);
+    for my $child (@w) {
+        add_edge($parent, $child);
+    }
+}
+
+if (defined($root)) {
+    if (!defined($tree{$root})) {
+        eprint "Invalid root node name, '${root}'.\n";
+        eprint "That node does not exist in the tree.\n";
+        exit 2;
+    }
+    print_tree($root, 0);
+    
+}
+else {
+    # No root is specified.
+    # Find all nodes that have no parent.
+    # There can be possibly multiple roots.
+    # Draw all trees.
+    #
+    my %nparents = ();
+    for my $parent_name (keys %tree) {
+        if (!defined($nparents{$parent_name})) {
+            $nparents{$parent_name} = 0;
+        }
+        my $children_ref = $tree{$parent_name};
+        for my $child_name (@$children_ref) {
+            if (defined($nparents{$child_name})) {
+                ++$nparents{$child_name};
+            }
+            else {
+                $nparents{$child_name} = 1;
+            }
+        }
+    }
+
+    my $nprint = 0;
+    for my $node_name (sort keys %nparents) {
+        my $n = $nparents{$node_name};
+        if (!defined($n) || $n == 0) {
+            if ($nprint >= 1) {
+                print "\n\n";
+            }
+            print_tree($node_name, 0);
+            ++$nprint;
+        }
+    }
+}
+
+exit 0;
