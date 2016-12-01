@@ -37,24 +37,30 @@ or strings separated by a given field separator.
 
 --debug
 
---fsep=<separator>
+--fsep=_separator_
 
-By default, each line of input is split on shitespace.
+By default, each line of input is split on whitespace.
 This option splits by the given field separator, instead.
 It is handy in case node names can be phrases containing whitespace.
 
---root=<name_name>
+--root=_nodename_
 
 Draw the tree using the given node name as the root.
 Without any `--root` option, the accumulated data structure is scanned
 for nodes that have no parents.
-There coould be more than one root.
+There could be more than one root.
 All roots will be printed.
 
 --ansi
 
 Draw the tree using ANSI line/box drawing characters,
 instead of just an unadorned indented listing.
+
+--indent=_n_
+
+Each level of indentation is _n_ spaces wide.
+Default is 4 spaces.
+In some cases, for small trees, 6 or 8 spaces might make things easier to read.
 
 --vspace
 
